@@ -1,68 +1,59 @@
 """
-main.py — точка входа: интерактивное консольное меню поиска фильмов.
-
-Архитектура:
-  • Создаёт экземпляры MovieSearcher, SearchLogger, SearchStats.
-  • Каждый пункт меню — отдельная функция (SRP).
-  • Весь вывод через __str__ классов formatter_UI.
-  • Обработка ошибок на каждом уровне — программа не падает аварийно.
+main.py — точка входа демо-версии.
 
 Запуск:
     python main.py
+
 """
 
+import os
 import sys
-from pathlib import Path
 from dotenv import load_dotenv
 
-# Загружаем .env из папки проекта — работает при любом рабочем каталоге
-load_dotenv(Path(__file__).parent / '.env')
+load_dotenv('.env')
+
+import pymysql
+from sql_requests import MovieSearcher
+from log_search_hist import SearchLogger
+from log_search import SearchStats
+from menu import run_menu
 
 
-# ── Вспомогательные функции ввода ─────────────────────────────────────────────
+def build_mysql_config() -> dict:
+    """Собирает конфиг MySQL из переменных окружения."""
+    return {
+        'host':            os.getenv('DB_HOST'),
+        'port':            int(os.getenv('DB_PORT', '3306')),
+        'user':            os.getenv('DB_USER'),
+        'password':        os.getenv('DB_PASSWORD'),
+        'database':        os.getenv('DB_NAME'),
+        'charset':         'utf8mb4',
+        'cursorclass':     pymysql.cursors.DictCursor,
+        'connect_timeout': int(os.getenv('DB_CONNECT_TIMEOUT', '30')),
+    }
 
-# ── Безопасное логирование (не прерывает основной поток) ──────────────────────
 
-# ── Поиск по ключевому слову ──────────────────────────────────────────────────
+def build_mongo_config() -> dict:
+    """Собирает конфиг MongoDB из переменных окружения."""
+    return {
+        'uri':        os.getenv('MONGO_URI', ''),
+        'db_name':    os.getenv('MONGO_DB',  'ich_edit'),
+        'collection': os.getenv('MONGO_COLLECTION', 'final_project_121225_oleg_v'),
+    }
 
-# ── Поиск по жанру и диапазону лет ───────────────────────────────────────────
-
-# ── Ввод жанра ────────────────────────────────────────────────────────────
-
-# ── Ввод диапазона лет ────────────────────────────────────────────────────
-
-# ── Статистика запросов ───────────────────────────────────────────────────────
-
-# ── Главный цикл ──────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """Создаёт компоненты и запускает меню."""
+    try:
+        searcher = MovieSearcher(build_mysql_config())
+    except EnvironmentError as exc:
+        print(f"Ошибка конфигурации: {exc}")
+        sys.exit(1)
 
-    print("\n  Добро пожаловать в систему поиска фильмов Sakila!")
+    logger = SearchLogger(build_mongo_config())
+    stats  = SearchStats(build_mongo_config())
 
-    while True:
-        print(menu)
-
-        try:
-
-        except:
-              choice = "0"
-
-        match choice:
-            case "1":
-                run_keyword_search(searcher, logger)
-            case "2":
-                run_genre_year_search(searcher, logger)
-            case "3":
-                show_popular_searches(stats)
-            case "4":
-                show_recent_searches(stats)
-            case "0":
-                print("\n  До свидания!\n")
-                logger.close()
-                stats.close()
-                sys.exit(0)
-            case _:
-                print("Неверный выбор. Введите цифру от 0 до 4.")
+    run_menu(searcher, logger, stats)
 
 
 if __name__ == "__main__":

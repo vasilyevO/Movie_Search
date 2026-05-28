@@ -9,6 +9,10 @@ sql_requests.py — SQL-запросы и методы поиска фильмо
 from typing import Generator
 
 from db_connection import DBConnection
+from logger import get_logger
+
+log = get_logger(__name__)
+
 
 class MovieSearcher(DBConnection):
     """
@@ -92,6 +96,7 @@ class MovieSearcher(DBConnection):
             ORDER BY f.title
             LIMIT %s OFFSET %s
         """
+        log.info("Поиск по ключевому слову: %r", keyword)
         yield from self._paginate(query, (f'%{keyword.strip()}%',))
 
     # ── Поиск по жанру и диапазону годов ──────────────────────────────────────
@@ -120,4 +125,5 @@ class MovieSearcher(DBConnection):
             ORDER BY f.title
             LIMIT %s OFFSET %s
         """
+        log.info("Поиск по жанру %r, годы %d–%d", genre, year_from, year_to)
         yield from self._paginate(query, (genre.strip(), year_from, year_to))
