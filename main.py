@@ -4,6 +4,14 @@ main.py — точка входа демо-версии.
 Запуск:
     python main.py
 
+Структура демо-папки:
+    main.py            — сборка конфигов и запуск
+    menu.py            — меню и взаимодействие с пользователем
+    db_connection.py   — подключение к MySQL
+    sql_requests.py    — SQL-запросы и поиск фильмов
+    log_search_hist.py — запись истории в MongoDB
+    log_search.py      — чтение статистики из MongoDB
+    .env               — параметры подключения
 """
 
 import os
