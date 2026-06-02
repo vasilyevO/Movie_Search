@@ -1,40 +1,60 @@
 """
-sql_requests.py — SQL-запросы и методы поиска фильмов в базе Sakila.
+sql_requests.py — SQL queries and film search logic for the Sakila database.
 
-Получает конфиг подключения из main.py через __init__ и передаёт
-его в DBConnection. Не знает про pymysql и глобальные переменные.
-Вызывается из main.py.
+Responsibilities:
+  - SQL query strings.
+  - Business logic for film search (by keyword, by genre and year range).
+  - Metadata retrieval (genres, year range, result counts).
+
+Contains no connection logic — that is the responsibility of db_connection.py.
+Called from main.py via menu.py.
 """
 
 from typing import Generator
 
 from db_connection import DBConnection
+from logger import get_logger
+
+log = get_logger(__name__)
+
 
 class MovieSearcher(DBConnection):
     """
-    Выполняет поиск фильмов в базе данных Sakila.
+    Searches for films in the Sakila MySQL database.
 
-    Наследует DBConnection — получает _fetch_all, _fetch_one, _paginate.
-    Все SQL-запросы параметризованы через %s (защита от инъекций).
-    Постраничный обход реализован через генераторы (экономия памяти).
+    Inherits DBConnection — receives _fetch_all, _fetch_one, _paginate
+    without duplicating connection logic (DRY principle).
+
+    All SQL queries use %s placeholders (SQL injection protection).
+    Paginated traversal is implemented via generators (memory efficiency).
 
     Args:
-        config: Словарь параметров pymysql.connect() из main.py.
+        config: pymysql.connect() parameter dictionary from main.py.
     """
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
 
-    # ── Метаданные ────────────────────────────────────────────────────────────
+    # ── Metadata ──────────────────────────────────────────────────────────────
 
     def get_genres(self) -> list[str]:
-        """Возвращает отсортированный список жанров из таблицы category."""
+        """
+        Returns a sorted list of genre names from the category table.
+
+        Returns:
+            List of genre name strings.
+        """
         query = "SELECT name FROM category ORDER BY name"
         rows = self._fetch_all(query)
         return [row['name'] for row in rows]
 
     def get_year_range(self) -> tuple[int, int]:
-        """Возвращает (min_year, max_year) из таблицы film."""
+        """
+        Returns the minimum and maximum film release years.
+
+        Returns:
+            Tuple (min_year, max_year).
+        """
         query = (
             "SELECT MIN(release_year) AS mn, MAX(release_year) AS mx "
             "FROM film"
@@ -44,10 +64,15 @@ class MovieSearcher(DBConnection):
             return int(row['mn']), int(row['mx'])
         return 0, 0
 
-    # ── Подсчёт результатов ───────────────────────────────────────────────────
+    # ── Result counts (for accurate logging) ─────────────────────────────────
 
     def count_by_keyword(self, keyword: str) -> int:
-        """Возвращает количество фильмов, подходящих под ключевое слово."""
+        """
+        Returns the total number of films matching the keyword.
+
+        Args:
+            keyword: Search word (% wildcards are added internally).
+        """
         query = "SELECT COUNT(*) AS cnt FROM film WHERE title LIKE %s"
         row = self._fetch_one(query, (f'%{keyword.strip()}%',))
         return int(row['cnt']) if row else 0
@@ -55,7 +80,14 @@ class MovieSearcher(DBConnection):
     def count_by_genre_year(
         self, genre: str, year_from: int, year_to: int
     ) -> int:
-        """Возвращает количество фильмов по жанру и диапазону лет."""
+        """
+        Returns the total number of films matching genre and year range.
+
+        Args:
+            genre:     Exact genre name (category.name).
+            year_from: Lower year bound (inclusive).
+            year_to:   Upper year bound (inclusive).
+        """
         query = """
             SELECT COUNT(*) AS cnt
             FROM film f
@@ -67,16 +99,19 @@ class MovieSearcher(DBConnection):
         row = self._fetch_one(query, (genre.strip(), year_from, year_to))
         return int(row['cnt']) if row else 0
 
-    # ── Поиск по ключевому слову ──────────────────────────────────────────────
+    # ── Keyword search ────────────────────────────────────────────────────────
 
     def search_by_keyword(
         self, keyword: str
     ) -> Generator[list[dict], None, None]:
         """
-        Генератор постраничного поиска фильмов по части названия.
+        Paginated generator for film search by partial title match.
+
+        Args:
+            keyword: Word to search for in the title field.
 
         Yields:
-            Страницы — списки словарей-фильмов (до page_size штук).
+            Pages — lists of film dictionaries (up to page_size each).
         """
         query = """
             SELECT
@@ -92,18 +127,24 @@ class MovieSearcher(DBConnection):
             ORDER BY f.title
             LIMIT %s OFFSET %s
         """
+        log.info("Keyword search: %r", keyword)
         yield from self._paginate(query, (f'%{keyword.strip()}%',))
 
-    # ── Поиск по жанру и диапазону годов ──────────────────────────────────────
+    # ── Genre + year range search ─────────────────────────────────────────────
 
     def search_by_genre_year(
         self, genre: str, year_from: int, year_to: int
     ) -> Generator[list[dict], None, None]:
         """
-        Генератор постраничного поиска по жанру и диапазону годов.
+        Paginated generator for film search by genre and year range.
+
+        Args:
+            genre:     Exact genre name (category.name match).
+            year_from: Lower year bound (inclusive).
+            year_to:   Upper year bound (inclusive).
 
         Yields:
-            Страницы — списки словарей-фильмов (до page_size штук).
+            Pages — lists of film dictionaries (up to page_size each).
         """
         query = """
             SELECT
@@ -120,4 +161,5 @@ class MovieSearcher(DBConnection):
             ORDER BY f.title
             LIMIT %s OFFSET %s
         """
+        log.info("Genre/year search: %r %d–%d", genre, year_from, year_to)
         yield from self._paginate(query, (genre.strip(), year_from, year_to))

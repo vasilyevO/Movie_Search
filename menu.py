@@ -1,43 +1,76 @@
 """
-menu.py — консольное меню демо-версии.
+menu.py — user interaction via a console menu.
 
-Три пункта: поиск по ключевому слову, последние запросы, выход.
-Простой текстовый вывод без цветов и форматтеров.
+Responsible only for:
+  • Inputting and validating user data.
+  • Building a menu dictionary with associated actions.
+  • Running the interactive menu loop.
+
+Does not contain SQL, output formatting or database connection logic.
+Called from main.py via run_menu().
 """
 
 import sys
+
+from formatter_UI import (
+    Colors,
+    MenuFormatter,
+    MovieTableFormatter,
+    GenreListFormatter,
+    SearchHistoryFormatter,
+    InfoMessage,
+)
 from sql_requests import MovieSearcher
-from log_search_hist import SearchLogger
+from mongo_log_search import SearchLogger
 from log_search import SearchStats
+from logger import get_logger
+
+log = get_logger(__name__)
 
 
-# ── Функции ввода ─────────────────────────────────────────────────────────────
+# ── Input support functions ─────────────────────────────────────────────
 
 def _prompt(message: str) -> str:
-    """Выводит подсказку и возвращает введённую строку (strip)."""
+    """Displays a tooltip and returns the entered string (strip)."""
     return input(message).strip()
 
 
+def _prompt_int(message: str, min_val: int, max_val: int) -> int | None:
+    """
+    Requests an integer within the range [min_val, max_val].
+
+    Returns:
+        The number entered, or 'None' if the input is invalid.
+    """
+    raw = _prompt(message)
+    try:
+        value = int(raw)
+    except ValueError:
+        log.warning("Некорректный ввод числа: %r", raw)
+        print(InfoMessage("Ожидается целое число. Попробуйте снова.", "error"))
+        return None
+
+    if not (min_val <= value <= max_val):
+        log.warning(
+            "Число вне диапазона: %d (допустимо %d–%d)", value, min_val, max_val
+        )
+        print(InfoMessage(
+            f"Значение должно быть от {min_val} до {max_val}.", "warning"
+        ))
+        return None
+
+    return value
+
+
 def _ask_next_page() -> bool:
-    """Спрашивает, показывать ли следующую страницу."""
-    return _prompt("\nПоказать следующие 10 результатов? [y/n]: ").lower() \
-           in ("y", "yes", "д", "да")
+    """It asks whether to display the next page of results."""
+    answer = _prompt(
+        f"\n{Colors.BOLD}Показать следующие результаты? [y/n]: {Colors.RESET}"
+    ).lower()
+    return answer in ("y", "yes", "д", "да")
 
 
-# ── Вывод фильмов ─────────────────────────────────────────────────────────────
-
-def _print_movies(page: list[dict], start_idx: int) -> None:
-    """Выводит страницу фильмов простым текстом."""
-    print()
-    for i, row in enumerate(page, start=start_idx):
-        title    = row.get("title",        "N/A")
-        category = row.get("category",     "N/A")
-        year     = row.get("release_year", "N/A")
-        rating   = row.get("rating",       "N/A")
-        print(f"  {i}. {title} | {category} | {year} | {rating}")
-
-
-# ── Запись в MongoDB ──────────────────────────────────────────────────────────
+# ── Secure logging in MongoDB ──────────────────────────────────────────
 
 def _safe_log(
     logger: SearchLogger,
@@ -45,45 +78,44 @@ def _safe_log(
     params: dict,
     results_count: int,
 ) -> None:
-    """Записывает запрос в MongoDB. При сбое выводит предупреждение."""
+    """Saves the query to MongoDB without interrupting operations in the event of a failure."""
     try:
         logger.log_search(search_type, params, results_count)
-        print(f"  [MongoDB] Запрос сохранён ({results_count} результатов)")
-    except (ConnectionError, RuntimeError) as exc:
-        print(f"  [MongoDB] Не удалось сохранить запрос: {exc}")
+    except (ConnectionError, RuntimeError, ValueError) as exc:
+        log.error("Не удалось записать запрос в MongoDB: %s", exc)
+        print(InfoMessage(f"[Лог] Не удалось сохранить запрос: {exc}", "warning"))
 
 
-# ── Действия меню ─────────────────────────────────────────────────────────────
+# ── Menu options ─────────────────────────────────────────────────────────────
 
 def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
-    """Поиск фильмов по ключевому слову с постраничным выводом."""
-    keyword = _prompt("\nВведите ключевое слово: ")
+    """Scenario 1: Searching for films by keyword in the title (page by page)."""
+    keyword = _prompt(f"{Colors.BOLD}Введите ключевое слово: {Colors.RESET}")
 
     if not keyword:
-        print("Ключевое слово не может быть пустым.")
+        print(InfoMessage("Ключевое слово не может быть пустым.", "warning"))
         return
 
     try:
         total_count = searcher.count_by_keyword(keyword)
     except (ConnectionError, RuntimeError) as exc:
-        print(f"Ошибка подключения к MySQL: {exc}")
+        log.error("Ошибка поиска по слову '%s': %s", keyword, exc)
+        print(InfoMessage(str(exc), "error"))
         return
 
     if total_count == 0:
-        print(f"По запросу «{keyword}» ничего не найдено.")
+        print(InfoMessage(f"По запросу «{keyword}» ничего не найдено.", "warning"))
         _safe_log(logger, "keyword", {"keyword": keyword}, 0)
         return
 
-    print(f"\nНайдено фильмов: {total_count}")
-    print("-" * 60)
+    print(InfoMessage(f"Всего найдено: {total_count} фильм(ов).", "info"))
 
     shown = 0
     for page in searcher.search_by_keyword(keyword):
-        _print_movies(page, start_idx=shown + 1)
+        print(f"\n{MovieTableFormatter(page, start_idx=shown + 1)}")
         shown += len(page)
-
         if len(page) < searcher.page_size or shown >= total_count:
-            print("\nЭто все найденные результаты.")
+            print(InfoMessage("Это все найденные результаты.", "success"))
             break
         if not _ask_next_page():
             break
@@ -91,63 +123,147 @@ def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
     _safe_log(logger, "keyword", {"keyword": keyword}, total_count)
 
 
+def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
+    """Scenario 2: Search by genre and year range."""
+    try:
+        genres = searcher.get_genres()
+        min_year, max_year = searcher.get_year_range()
+    except (ConnectionError, RuntimeError) as exc:
+        log.error("Ошибка получения метаданных: %s", exc)
+        print(InfoMessage(str(exc), "error"))
+        return
+
+    if not genres:
+        print(InfoMessage("Жанры не найдены в базе данных.", "warning"))
+        return
+
+    print(GenreListFormatter(genres))
+    print(
+        f"\n{Colors.HEADER}Диапазон лет в базе: "
+        f"{Colors.SUCCESS}{min_year} — {max_year}{Colors.RESET}"
+    )
+
+    genre_input = _prompt(
+        f"\n{Colors.BOLD}Введите жанр (точно как в списке выше): {Colors.RESET}"
+    )
+    genre = next((g for g in genres if g.lower() == genre_input.lower()), None)
+    if genre is None:
+        log.warning("Введён несуществующий жанр: %r", genre_input)
+        print(InfoMessage(
+            f"Жанр «{genre_input}» не найден. Выберите из списка.", "error"
+        ))
+        return
+
+    year_from = _prompt_int(
+        f"{Colors.BOLD}Год ОТ ({min_year}–{max_year}): {Colors.RESET}",
+        min_year, max_year,
+    )
+    if year_from is None:
+        return
+
+    year_to = _prompt_int(
+        f"{Colors.BOLD}Год ДО ({year_from}–{max_year}): {Colors.RESET}",
+        year_from, max_year,
+    )
+    if year_to is None:
+        return
+
+    try:
+        total_count = searcher.count_by_genre_year(genre, year_from, year_to)
+    except (ConnectionError, RuntimeError) as exc:
+        log.error("Ошибка поиска по жанру '%s': %s", genre, exc)
+        print(InfoMessage(str(exc), "error"))
+        return
+
+    if total_count == 0:
+        print(InfoMessage(
+            f"По жанру «{genre}» за {year_from}–{year_to} ничего не найдено.",
+            "warning",
+        ))
+        _safe_log(
+            logger, "genre_year",
+            {"genre": genre, "year_from": year_from, "year_to": year_to}, 0,
+        )
+        return
+
+    print(InfoMessage(f"Всего найдено: {total_count} фильм(ов).", "info"))
+
+    shown = 0
+    for page in searcher.search_by_genre_year(genre, year_from, year_to):
+        print(f"\n{MovieTableFormatter(page, start_idx=shown + 1)}")
+        shown += len(page)
+        if len(page) < searcher.page_size or shown >= total_count:
+            print(InfoMessage("Это все найденные результаты.", "success"))
+            break
+        if not _ask_next_page():
+            break
+
+    _safe_log(
+        logger, "genre_year",
+        {"genre": genre, "year_from": year_from, "year_to": year_to},
+        total_count,
+    )
+
+
+def show_popular_searches(stats: SearchStats) -> None:
+    """Displays the top 5 most frequent search queries."""
+    try:
+        records = stats.get_popular_searches(limit=5)
+        print(SearchHistoryFormatter(records, "ТОП-5 ПОПУЛЯРНЫХ ЗАПРОСОВ"))
+    except (ConnectionError, RuntimeError) as exc:
+        log.error("Ошибка получения популярных запросов: %s", exc)
+        print(InfoMessage(str(exc), "error"))
+
+
 def show_recent_searches(stats: SearchStats) -> None:
-    """Выводит 5 последних уникальных поисковых запросов из MongoDB."""
+    """Displays the last 5 unique search queries."""
     try:
         records = stats.get_recent_unique_searches(limit=5)
+        print(SearchHistoryFormatter(records, "5 ПОСЛЕДНИХ УНИКАЛЬНЫХ ЗАПРОСОВ"))
     except (ConnectionError, RuntimeError) as exc:
-        print(f"Ошибка подключения к MongoDB: {exc}")
-        return
-
-    print("\n" + "=" * 60)
-    print("  5 ПОСЛЕДНИХ УНИКАЛЬНЫХ ЗАПРОСОВ")
-    print("=" * 60)
-
-    if not records:
-        print("  История запросов пуста.")
-        return
-
-    for i, rec in enumerate(records, start=1):
-        s_type = rec.get("search_type", "N/A")
-        params = ", ".join(
-            f"{k}: {v}" for k, v in rec.get("params", {}).items()
-        )
-        count  = rec.get("results_count", 0)
-        ts     = rec.get("timestamp", "N/A")
-        print(f"  {i}. [{s_type}] {params}")
-        print(f"     результатов: {count}  |  {ts}")
+        log.error("Ошибка получения последних запросов: %s", exc)
+        print(InfoMessage(str(exc), "error"))
 
 
 def exit_app(logger: SearchLogger, stats: SearchStats) -> None:
-    """Завершает работу приложения."""
-    print("\nДо свидания!\n")
+    """Closes the application correctly."""
+    print(InfoMessage("\n  До свидания! 🎬\n", "success"))
+    log.info("Приложение завершено пользователем")
     logger.close()
     stats.close()
     sys.exit(0)
 
 
-# ── Словарь меню ──────────────────────────────────────────────────────────────
+# ── Menu glossary ──────────────────────────────────────────────────────────────
 
-def build_menu_actions(
+def _build_menu_actions(
     searcher: MovieSearcher,
     logger: SearchLogger,
     stats: SearchStats,
 ) -> dict:
     """
-    Словарь пунктов меню с привязанными действиями.
-    Добавить новый пункт — одна строка здесь, цикл не трогаем.
+    Creates a dictionary of menu items with associated actions.
+
+    Structure: {"key": ("Item name", callable)}
+
+    To add a new item, simply add a line here.
+    There is no need to modify either MenuFormatter or run_menu().
     """
     return {
         "1": ("Поиск по ключевому слову",
               lambda: run_keyword_search(searcher, logger)),
-        "2": ("5 последних уникальных запросов",
+        "2": ("Поиск по жанру и диапазону годов",
+              lambda: run_genre_year_search(searcher, logger)),
+        "3": ("ТОП-5 популярных запросов",
+              lambda: show_popular_searches(stats)),
+        "4": ("5 последних уникальных запросов",
               lambda: show_recent_searches(stats)),
         "0": ("Выход",
               lambda: exit_app(logger, stats)),
     }
 
 
-# ── Цикл меню ─────────────────────────────────────────────────────────────────
+# ── Public menu entry point ──────────────────────────────────────────────
 
 def run_menu(
     searcher: MovieSearcher,
@@ -155,22 +271,27 @@ def run_menu(
     stats: SearchStats,
 ) -> None:
     """
-    Запускает интерактивный цикл меню.
-    Получает готовые компоненты из main.py.
-    Цикл не знает про конкретные действия — вызывает callable из словаря.
-    """
-    menu_actions = build_menu_actions(searcher, logger, stats)
+    Starts an interactive menu loop.
 
-    print("\nДобро пожаловать в систему поиска фильмов Sakila!")
+    Called from main.py — the only public function of this module.
+
+    Args:
+        searcher: An instance of MovieSearcher for search queries.
+        logger: An instance of SearchLogger for logging history.
+        stats: An instance of SearchStats for reading statistics.
+    """
+    menu_actions   = _build_menu_actions(searcher, logger, stats)
+    menu_formatter = MenuFormatter(menu_actions)
+
+    print(InfoMessage(
+        "\n  Добро пожаловать в систему поиска фильмов Sakila! 🎬", "success"
+    ))
 
     while True:
-        print("\n" + "=" * 40)
-        for key, (label, _) in menu_actions.items():
-            print(f"  [{key}]  {label}")
-        print("=" * 40)
+        print(menu_formatter)
 
         try:
-            choice = _prompt("Ваш выбор: ")
+            choice = _prompt(f"{Colors.BOLD}Ваш выбор: {Colors.RESET}")
         except (EOFError, KeyboardInterrupt):
             choice = "0"
 
@@ -178,7 +299,11 @@ def run_menu(
         menu_item = menu_actions.get(choice)
 
         if menu_item is None:
-            print(f"Неверный выбор. Доступны: {', '.join(menu_actions)}")
+            log.warning("Неверный пункт меню: %r", choice)
+            print(InfoMessage(
+                f"Неверный выбор. Доступны: {', '.join(menu_actions)}",
+                "warning",
+            ))
             continue
 
         _, action = menu_item

@@ -1,0 +1,4 @@
+2026-06-01 10:35:50 | ERROR    | movie_search.db_connection | MySQL connection error: (1045, "Access denied for user 'ich1'@'tmo-113-77.customers.d1-online.com' (using password: YES)")
+2026-06-01 10:35:50 | ERROR    | movie_search.menu | Ошибка поиска по слову 'year': Не удалось подключиться к MySQL: (1045, "Access denied for user 'ich1'@'tmo-113-77.customers.d1-online.com' (using password: YES)")
+2026-06-02 14:08:33 | ERROR    | movie_search.db_connection | MySQL connection error: (2003, "Can't connect to MySQL server on 'ich-db.edu.itcareerhub.de' ([Errno 11002] getaddrinfo failed)")
+2026-06-02 14:08:33 | ERROR    | movie_search.menu | Ошибка поиска по слову 'day': Не удалось подключиться к MySQL: (2003, "Can't connect to MySQL server on 'ich-db.edu.itcareerhub.de' ([Errno 11002] getaddrinfo failed)")

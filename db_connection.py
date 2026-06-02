@@ -1,28 +1,42 @@
 """
-db_connection.py — управление соединением с MySQL и выполнение запросов.
+db_connection.py — MySQL connection management and query execution.
 
-Конфигурация передаётся в __init__ как аргумент — класс не зависит от
-глобальных переменных и может быть создан для любой базы данных.
+Responsibilities:
+  - Storing the connection configuration.
+  - Opening connections via pymysql.connect().
+  - Generic query execution methods (_fetch_all, _fetch_one).
+  - Generic paginated result generator (_paginate).
+
+Contains no SQL queries — that is the responsibility of sql_requests.py.
 """
 
 import os
 from typing import Generator
 import pymysql
 
+from logger import get_logger
+
+log = get_logger(__name__)
+
 
 class DBConnection:
     """
-    Управляет подключением к MySQL и выполнением произвольных запросов.
+    Manages MySQL connections and executes arbitrary queries.
 
-    Базовый класс для MovieSearcher (sql_requests.py).
-    Не содержит SQL — только механику работы с базой.
+    Base class for MovieSearcher (sql_requests.py).
+    Contains no SQL — only the database interaction mechanics.
 
-    Конфиг передаётся снаружи — можно создать несколько экземпляров
-    для разных баз данных без изменения класса (принцип OCP).
+    The configuration is injected via __init__ so the class is not
+    coupled to global variables and multiple instances can be created
+    for different databases without modifying the class (OCP).
 
-    Атрибуты (приватные, доступны через property):
-        __config    — словарь подключения pymysql.
-        __page_size — количество строк на одну страницу результатов.
+    Private attributes (accessible via properties):
+        __config    — pymysql connection dictionary.
+        __page_size — number of rows per results page.
+
+    Args:
+        config: Dictionary of pymysql.connect() parameters.
+                Required keys: host, user, password, database.
     """
 
     _MIN_PAGE: int = 1
@@ -30,19 +44,15 @@ class DBConnection:
     _DEF_PAGE: int = 10
 
     def __init__(self, config: dict) -> None:
-        """
-        Args:
-            config: Словарь параметров pymysql.connect().
-                    Обязательные ключи: host, user, password, database.
-        """
         missing = [k for k in ('host', 'user', 'password', 'database')
                    if not config.get(k)]
         if missing:
             msg = (
-                f"Не заданы параметры подключения: "
+                f"Missing connection parameters: "
                 f"{', '.join(k.upper() for k in missing)}. "
-                f"Проверьте файл .env"
+                f"Check your .env file."
             )
+            log.error(msg)
             raise EnvironmentError(msg)
 
         self.__config: dict = config
@@ -54,44 +64,52 @@ class DBConnection:
 
     @property
     def page_size(self) -> int:
-        """Количество фильмов на одной странице результатов."""
+        """Number of films per results page."""
         return self.__page_size
 
     @page_size.setter
     def page_size(self, value: int) -> None:
         if not isinstance(value, int):
-            raise TypeError("page_size должен быть целым числом")
+            raise TypeError("page_size must be an integer")
         if not (self._MIN_PAGE <= value <= self._MAX_PAGE):
             raise ValueError(
-                f"page_size должен быть от {self._MIN_PAGE} до {self._MAX_PAGE}"
+                f"page_size must be between {self._MIN_PAGE} and {self._MAX_PAGE}"
             )
         self.__page_size = value
 
-    # ── Подключение ───────────────────────────────────────────────────────────
+    # ── Connection ────────────────────────────────────────────────────────────
 
     def _get_connection(self) -> pymysql.connections.Connection:
         """
-        Открывает и возвращает соединение с MySQL.
+        Opens and returns a MySQL connection.
 
         Raises:
-            ConnectionError: При недоступности сервера.
+            ConnectionError: If the server is unreachable.
         """
         try:
             return pymysql.connect(**self.__config)
         except pymysql.MySQLError as exc:
+            log.error("MySQL connection error: %s", exc)
             raise ConnectionError(
                 f"Не удалось подключиться к MySQL: {exc}"
             ) from exc
 
-    # ── Выполнение запросов ───────────────────────────────────────────────────
+    # ── Query execution ───────────────────────────────────────────────────────
 
     def _fetch_all(self, query: str, params: tuple = ()) -> list[dict]:
         """
-        Выполняет SELECT-запрос и возвращает все строки.
+        Executes a SELECT query and returns all rows.
 
         Args:
-            query:  SQL с %s-плейсхолдерами (защита от инъекций).
-            params: Значения для подстановки.
+            query:  SQL with %s placeholders (injection-safe).
+            params: Values to substitute.
+
+        Returns:
+            List of row dictionaries.
+
+        Raises:
+            ConnectionError: Propagated from _get_connection().
+            RuntimeError:    On query execution error.
         """
         try:
             with self._get_connection() as conn:
@@ -101,26 +119,32 @@ class DBConnection:
         except ConnectionError:
             raise
         except pymysql.MySQLError as exc:
+            log.error("SQL query error: %s | query: %s", exc, query)
             raise RuntimeError(f"Ошибка выполнения запроса: {exc}") from exc
 
     def _fetch_one(self, query: str, params: tuple = ()) -> dict | None:
-        """Выполняет SELECT-запрос и возвращает первую строку (или None)."""
+        """Executes a SELECT query and returns the first row (or None)."""
         rows = self._fetch_all(query, params)
         return rows[0] if rows else None
 
-    # ── Пагинация ─────────────────────────────────────────────────────────────
+    # ── Pagination ────────────────────────────────────────────────────────────
 
     def _paginate(
         self, query: str, base_params: tuple
     ) -> Generator[list[dict], None, None]:
         """
-        Универсальный генератор постраничного обхода результатов.
+        Universal paginated result generator.
 
-        Ожидает, что query заканчивается «LIMIT %s OFFSET %s».
-        Останавливается когда страница пустая или короче page_size.
+        Expects the query to end with 'LIMIT %s OFFSET %s'.
+        Appends page_size and offset to base_params on each iteration.
+        Stops when the page is empty or shorter than page_size.
+
+        Args:
+            query:       SQL query ending with 'LIMIT %s OFFSET %s'.
+            base_params: Core parameter tuple (without LIMIT/OFFSET).
 
         Yields:
-            Страницы — списки словарей-строк.
+            Pages — lists of row dictionaries.
         """
         offset = 0
         while True:

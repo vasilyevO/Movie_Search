@@ -1,21 +1,25 @@
 """
-log_search.py — статистика поисковых запросов из MongoDB.
+log_search.py — search request statistics from MongoDB.
 
-SearchStats наследует MongoBase и прокидывает параметры подключения
-через super().__init__() — логика соединения не дублируется (DRY).
+SearchStats inherits MongoBase — connection logic is not duplicated (DRY).
 """
 
 import pymongo.errors
 
-from log_search_hist import MongoBase
+from mongo_log_search import MongoBase
+from logger import get_logger
+
+log = get_logger(__name__)
+
 
 class SearchStats(MongoBase):
     """
-    Читает агрегированную статистику из коллекции поисковых запросов.
-    Наследует MongoBase для переиспользования логики подключения.
+    Reads aggregated statistics from the search history collection.
+
+    Inherits MongoBase to reuse connection management.
 
     Args:
-        config: Словарь с ключами uri, db_name, collection.
+        config: Dictionary with keys: uri, db_name, collection.
     """
 
     def __init__(self, config: dict) -> None:
@@ -23,9 +27,20 @@ class SearchStats(MongoBase):
 
     def get_popular_searches(self, limit: int = 5) -> list[dict]:
         """
-        Возвращает самые часто повторяющиеся запросы.
+        Returns the most frequently repeated search queries.
 
-        Группирует по (search_type, params), считает частоту.
+        Groups by (search_type, params) and counts occurrences (frequency).
+
+        Args:
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of dicts with keys: search_type, params,
+            frequency, results_count, timestamp.
+
+        Raises:
+            ConnectionError: If MongoDB is unreachable.
+            RuntimeError:    If the aggregation pipeline fails.
         """
         pipeline = [
             {
@@ -56,10 +71,21 @@ class SearchStats(MongoBase):
 
     def get_recent_unique_searches(self, limit: int = 5) -> list[dict]:
         """
-        Возвращает последние уникальные запросы.
+        Returns the most recent unique search queries.
 
-        Уникальность — по паре (search_type, params).
-        Для каждой пары берётся самая последняя запись.
+        Uniqueness is determined by the (search_type, params) pair.
+        For each unique pair the latest record is selected.
+
+        Args:
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of dicts with keys: search_type, params,
+            results_count, timestamp.
+
+        Raises:
+            ConnectionError: If MongoDB is unreachable.
+            RuntimeError:    If the aggregation pipeline fails.
         """
         pipeline = [
             {'$sort': {'timestamp': -1}},
@@ -73,6 +99,7 @@ class SearchStats(MongoBase):
                     'results_count': {'$first': '$results_count'},
                 }
             },
+            # Re-sort after $group — ordering is not preserved
             {'$sort': {'timestamp': -1}},
             {'$limit': limit},
             {
@@ -88,12 +115,25 @@ class SearchStats(MongoBase):
         return self._run_pipeline(pipeline)
 
     def _run_pipeline(self, pipeline: list[dict]) -> list[dict]:
-        """Выполняет агрегационный pipeline и возвращает результат."""
+        """
+        Executes a MongoDB aggregation pipeline and returns the result.
+
+        Args:
+            pipeline: List of aggregation stage dictionaries.
+
+        Returns:
+            List of result documents.
+
+        Raises:
+            ConnectionError: Propagated from _get_collection().
+            RuntimeError:    On any other pipeline execution error.
+        """
         try:
             return list(self._get_collection().aggregate(pipeline))
         except ConnectionError:
             raise
         except Exception as exc:
+            log.error("MongoDB aggregation error: %s", exc)
             raise RuntimeError(
                 f"Ошибка чтения статистики из MongoDB: {exc}"
             ) from exc

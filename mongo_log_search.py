@@ -1,25 +1,34 @@
 """
-log_search_hist.py — базовый класс MongoDB-соединения и логирование запросов.
+mongo_log_search.py — MongoDB base connection class and search request logging.
 
-Параметры подключения передаются в __init__ — класс не зависит от
-глобальных переменных и может быть подключён к любой MongoDB-базе.
+MongoBase  — base class reused in log_search.py (DRY principle).
+SearchLogger — writes each search request to a MongoDB collection.
+
+Parameter normalisation:
+  - Strings are lowercased and stripped (.strip().lower()).
+  - Ensures consistent deduplication when aggregating statistics.
 """
 
 from datetime import datetime, timezone
 import pymongo
 import pymongo.errors
 
+from logger import get_logger
+
+log = get_logger(__name__)
+
 
 class MongoBase:
     """
-    Управляет жизненным циклом MongoDB-клиента (ленивое подключение).
+    Manages the MongoDB client lifecycle (lazy connection).
 
-    Базовый класс для SearchLogger и SearchStats (принцип DRY).
-    Параметры подключения принимаются снаружи — можно создать несколько
-    экземпляров для разных баз без изменения класса (принцип OCP).
+    Base class for SearchLogger and SearchStats.
+    Connection parameters are injected via __init__ — the class
+    is not coupled to global variables and supports multiple instances
+    pointing at different databases (OCP).
 
     Args:
-        config: Словарь с ключами uri, db_name, collection.
+        config: Dictionary with keys: uri, db_name, collection.
     """
 
     def __init__(self, config: dict) -> None:
@@ -28,24 +37,26 @@ class MongoBase:
         self.__collection: str                        = config['collection']
         self.__client:     pymongo.MongoClient | None = None
 
-    # ── Properties (только чтение) ────────────────────────────────────────────
+    # ── Read-only properties ──────────────────────────────────────────────────
 
     @property
     def db_name(self) -> str:
+        """Name of the MongoDB database."""
         return self.__db_name
 
     @property
     def collection_name(self) -> str:
+        """Name of the MongoDB collection."""
         return self.__collection
 
-    # ── Подключение ───────────────────────────────────────────────────────────
+    # ── Connection ────────────────────────────────────────────────────────────
 
     def _get_collection(self) -> pymongo.collection.Collection:
         """
-        Возвращает коллекцию, создавая клиент при первом обращении.
+        Returns the collection, creating the client on first call.
 
         Raises:
-            ConnectionError: При сбое или таймауте подключения.
+            ConnectionError: On timeout or connection failure.
         """
         try:
             if self.__client is None:
@@ -56,14 +67,17 @@ class MongoBase:
                 self.__client.admin.command('ping')
             return self.__client[self.__db_name][self.__collection]
         except pymongo.errors.ServerSelectionTimeoutError as exc:
+            log.error("MongoDB connection timeout: %s", exc)
             raise ConnectionError(f"Тайм-аут MongoDB: {exc}") from exc
         except pymongo.errors.ConnectionFailure as exc:
+            log.error("MongoDB connection failure: %s", exc)
             raise ConnectionError(f"Ошибка подключения к MongoDB: {exc}") from exc
         except pymongo.errors.ConfigurationError as exc:
+            log.error("MongoDB invalid URI: %s", exc)
             raise ConnectionError(f"Некорректный URI MongoDB: {exc}") from exc
 
     def close(self) -> None:
-        """Закрывает клиент MongoDB."""
+        """Closes the MongoDB client."""
         if self.__client is not None:
             self.__client.close()
             self.__client = None
@@ -74,15 +88,18 @@ class MongoBase:
 
 class SearchLogger(MongoBase):
     """
-    Записывает поисковые события в MongoDB-коллекцию.
+    Writes search events to a MongoDB collection.
 
-    Пример документа:
+    Document example:
         {
-            "timestamp":     "2025-05-01T15:34:00",
+            "timestamp":     "2026-05-28_17:21:16",
             "search_type":   "keyword",
             "params":        {"keyword": "matrix"},
             "results_count": 3
         }
+
+    Args:
+        config: Dictionary with keys: uri, db_name, collection.
     """
 
     def __init__(self, config: dict) -> None:
@@ -90,7 +107,18 @@ class SearchLogger(MongoBase):
 
     @staticmethod
     def _normalize_params(params: dict) -> dict:
-        """Нормализует строковые параметры: strip + lower."""
+        """
+        Normalises string parameter values: strip + lower.
+
+        Ensures identical queries typed in different cases
+        are grouped correctly during aggregation.
+
+        Args:
+            params: Raw search parameter dictionary.
+
+        Returns:
+            New dictionary with normalised string values.
+        """
         return {
             key: value.strip().lower() if isinstance(value, str) else value
             for key, value in params.items()
@@ -103,12 +131,16 @@ class SearchLogger(MongoBase):
         results_count: int,
     ) -> None:
         """
-        Сохраняет запись о поисковом запросе в MongoDB.
+        Persists a search request record in MongoDB.
 
         Args:
-            search_type:   'keyword' или 'genre_year'.
-            params:        Словарь параметров поиска.
-            results_count: Количество найденных фильмов.
+            search_type:   Search type — 'keyword' or 'genre_year'.
+            params:        Search parameter dictionary.
+            results_count: Total number of matching films found.
+
+        Raises:
+            ConnectionError: If MongoDB is unreachable.
+            RuntimeError:    If the insert operation fails.
         """
         document = {
             'timestamp':     datetime.now(timezone.utc).strftime('%Y-%m-%d_%H:%M:%S'),
@@ -119,4 +151,8 @@ class SearchLogger(MongoBase):
         try:
             self._get_collection().insert_one(document)
         except pymongo.errors.PyMongoError as exc:
+            log.error(
+                "MongoDB write error | search_type=%s | params=%s | %s",
+                search_type, params, exc,
+            )
             raise RuntimeError(f"Ошибка записи в MongoDB: {exc}") from exc

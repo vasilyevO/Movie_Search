@@ -1,34 +1,43 @@
 """
-main.py — точка входа демо-версии.
+main.py — the entry point for building and running the application.
 
-Запуск:
+It is responsible only for:
+  • Loading the configuration from .env.
+  • Constructing connection configurations.
+  • Creating component instances.
+  • Passing control to run_menu().
+
+To run:
     python main.py
-
-Структура демо-папки:
-    main.py            — сборка конфигов и запуск
-    menu.py            — меню и взаимодействие с пользователем
-    db_connection.py   — подключение к MySQL
-    sql_requests.py    — SQL-запросы и поиск фильмов
-    log_search_hist.py — запись истории в MongoDB
-    log_search.py      — чтение статистики из MongoDB
-    .env               — параметры подключения
 """
 
 import os
 import sys
 from dotenv import load_dotenv
 
+# ── Load the .env file FIRST, before importing any project modules ────────────
 load_dotenv('.env')
 
 import pymysql
+from logger import get_logger
 from sql_requests import MovieSearcher
-from log_search_hist import SearchLogger
+from mongo_log_search import SearchLogger
 from log_search import SearchStats
 from menu import run_menu
+from formatter_UI import InfoMessage
 
+log = get_logger(__name__)
+
+
+# ── Creating connection configurations ───────────────────────────────────────────
 
 def build_mysql_config() -> dict:
-    """Собирает конфиг MySQL из переменных окружения."""
+    """
+    Retrieves a MySQL configuration dictionary from environment variables.
+
+    Returns:
+        A dictionary of parameters for `pymysql.connect()`.
+    """
     return {
         'host':            os.getenv('DB_HOST'),
         'port':            int(os.getenv('DB_PORT', '3306')),
@@ -42,7 +51,13 @@ def build_mysql_config() -> dict:
 
 
 def build_mongo_config() -> dict:
-    """Собирает конфиг MongoDB из переменных окружения."""
+    """
+    Reads MongoDB settings from environment variables.
+
+    Returns:
+        A dictionary with the keys `uri`, `db_name` and `collection` —
+        identical to `build_mysql_config()`.
+    """
     return {
         'uri':        os.getenv('MONGO_URI', ''),
         'db_name':    os.getenv('MONGO_DB',  'ich_edit'),
@@ -50,12 +65,15 @@ def build_mongo_config() -> dict:
     }
 
 
+# ── Точка входа ───────────────────────────────────────────────────────────────
+
 def main() -> None:
-    """Создаёт компоненты и запускает меню."""
+    """Creates components and passes control to run_menu()."""
     try:
         searcher = MovieSearcher(build_mysql_config())
     except EnvironmentError as exc:
-        print(f"Ошибка конфигурации: {exc}")
+        log.error("Ошибка конфигурации MySQL при запуске: %s", exc)
+        print(InfoMessage(f"Ошибка конфигурации: {exc}", "error"))
         sys.exit(1)
 
     logger = SearchLogger(build_mongo_config())
