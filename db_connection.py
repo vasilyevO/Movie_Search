@@ -135,6 +135,18 @@ class DBConnection:
         """
         Universal paginated result generator.
 
+        Opens ONE connection for the entire pagination session and keeps
+        it open across all pages. This makes the implementation
+        dialect-agnostic: it works correctly with both LIMIT/OFFSET
+        (MySQL, SQLite, MariaDB) and server-side cursors (PostgreSQL),
+        where closing the connection mid-iteration would destroy the
+        cursor and lose unfetched rows.
+
+        The connection is closed automatically when:
+          - all pages have been yielded (normal completion), or
+          - the caller breaks out of the for-loop early (GeneratorExit
+            is thrown into the generator and the with-block finalises).
+
         Expects the query to end with 'LIMIT %s OFFSET %s'.
         Appends page_size and offset to base_params on each iteration.
         Stops when the page is empty or shorter than page_size.
@@ -146,14 +158,23 @@ class DBConnection:
         Yields:
             Pages — lists of row dictionaries.
         """
-        offset = 0
-        while True:
-            page = self._fetch_all(
-                query, base_params + (self.__page_size, offset)
-            )
-            if not page:
-                break
-            yield page
-            if len(page) < self.__page_size:
-                break
-            offset += self.__page_size
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    offset = 0
+                    while True:
+                        cur.execute(
+                            query, base_params + (self.__page_size, offset)
+                        )
+                        page = cur.fetchall()
+                        if not page:
+                            break
+                        yield page
+                        if len(page) < self.__page_size:
+                            break
+                        offset += self.__page_size
+        except ConnectionError:
+            raise
+        except pymysql.MySQLError as exc:
+            log.error("Pagination query error: %s | query: %s", exc, query)
+            raise RuntimeError(f"Ошибка выполнения запроса: {exc}") from exc
