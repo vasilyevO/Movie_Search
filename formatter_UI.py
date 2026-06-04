@@ -144,7 +144,12 @@ class MovieTableFormatter:
 # ── Genre list ────────────────────────────────────────────────────────────────
 
 class GenreListFormatter:
-    """Formats a genre list to display before user input."""
+    """
+    Formats a genre list as a numbered column for selection by number.
+
+    The user picks a genre by its number, which is simpler and less
+    error-prone than typing the full genre name.
+    """
 
     def __init__(self, genres: list[str]) -> None:
         self._genres: list[str] = genres
@@ -153,11 +158,12 @@ class GenreListFormatter:
         if not self._genres:
             return f"{Colors.WARNING}Жанры не найдены.{Colors.RESET}"
         header = f"\n{Colors.HEADER}Доступные жанры:{Colors.RESET}"
+        # Numbered column: each genre on its own line with its index
         items  = [
-            f"  {Colors.SUCCESS}{g}{Colors.RESET}"
-            for g in self._genres
+            f"  {Colors.SUCCESS}{idx:>2}{Colors.RESET}. {g}"
+            for idx, g in enumerate(self._genres, start=1)
         ]
-        return header + "\n" + "  ".join(items)
+        return header + "\n" + "\n".join(items)
 
 
 # ── Search history / statistics ───────────────────────────────────────────────

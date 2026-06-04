@@ -1,13 +1,13 @@
 """
-menu.py — user interaction via a console menu.
+menu.py — взаимодействие с пользователем через консольное меню.
 
-Responsible only for:
-  • Inputting and validating user data.
-  • Building a menu dictionary with associated actions.
-  • Running the interactive menu loop.
+Отвечает только за:
+  • Ввод и валидацию данных от пользователя.
+  • Построение словаря меню с привязанными действиями.
+  • Запуск интерактивного цикла меню.
 
-Does not contain SQL, output formatting or database connection logic.
-Called from main.py via run_menu().
+Не содержит SQL, форматирования вывода и логики подключения к БД.
+Вызывается из main.py через run_menu().
 """
 
 import sys
@@ -28,19 +28,19 @@ from logger import get_logger
 log = get_logger(__name__)
 
 
-# ── Input support functions ─────────────────────────────────────────────
+# ── Вспомогательные функции ввода ─────────────────────────────────────────────
 
 def _prompt(message: str) -> str:
-    """Displays a tooltip and returns the entered string (strip)."""
+    """Выводит подсказку и возвращает введённую строку (strip)."""
     return input(message).strip()
 
 
 def _prompt_int(message: str, min_val: int, max_val: int) -> int | None:
     """
-    Requests an integer within the range [min_val, max_val].
+    Запрашивает целое число в диапазоне [min_val, max_val].
 
     Returns:
-        The number entered, or 'None' if the input is invalid.
+        Введённое число или None при некорректном вводе.
     """
     raw = _prompt(message)
     try:
@@ -63,14 +63,14 @@ def _prompt_int(message: str, min_val: int, max_val: int) -> int | None:
 
 
 def _ask_next_page() -> bool:
-    """It asks whether to display the next page of results."""
+    """Спрашивает, показывать ли следующую страницу результатов."""
     answer = _prompt(
         f"\n{Colors.BOLD}Показать следующие результаты? [y/n]: {Colors.RESET}"
     ).lower()
     return answer in ("y", "yes", "д", "да")
 
 
-# ── Secure logging in MongoDB ──────────────────────────────────────────
+# ── Безопасное логирование в MongoDB ──────────────────────────────────────────
 
 def _safe_log(
     logger: SearchLogger,
@@ -78,7 +78,7 @@ def _safe_log(
     params: dict,
     results_count: int,
 ) -> None:
-    """Saves the query to MongoDB without interrupting operations in the event of a failure."""
+    """Сохраняет запрос в MongoDB, не прерывая работу при сбое."""
     try:
         logger.log_search(search_type, params, results_count)
     except (ConnectionError, RuntimeError, ValueError) as exc:
@@ -86,10 +86,10 @@ def _safe_log(
         print(InfoMessage(f"[Лог] Не удалось сохранить запрос: {exc}", "warning"))
 
 
-# ── Menu options ─────────────────────────────────────────────────────────────
+# ── Действия меню ─────────────────────────────────────────────────────────────
 
 def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
-    """Scenario 1: Searching for films by keyword in the title (page by page)."""
+    """Сценарий 1: поиск фильмов по ключевому слову в названии (постранично)."""
     keyword = _prompt(f"{Colors.BOLD}Введите ключевое слово: {Colors.RESET}")
 
     if not keyword:
@@ -124,7 +124,7 @@ def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
 
 
 def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
-    """Scenario 2: Search by genre and year range."""
+    """Сценарий 2: поиск по жанру + диапазону годов."""
     try:
         genres = searcher.get_genres()
         min_year, max_year = searcher.get_year_range()
@@ -143,16 +143,14 @@ def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None
         f"{Colors.SUCCESS}{min_year} — {max_year}{Colors.RESET}"
     )
 
-    genre_input = _prompt(
-        f"\n{Colors.BOLD}Введите жанр (точно как в списке выше): {Colors.RESET}"
+    # User selects a genre by its number from the displayed list
+    genre_num = _prompt_int(
+        f"\n{Colors.BOLD}Введите номер жанра (1–{len(genres)}): {Colors.RESET}",
+        1, len(genres),
     )
-    genre = next((g for g in genres if g.lower() == genre_input.lower()), None)
-    if genre is None:
-        log.warning("Введён несуществующий жанр: %r", genre_input)
-        print(InfoMessage(
-            f"Жанр «{genre_input}» не найден. Выберите из списка.", "error"
-        ))
+    if genre_num is None:
         return
+    genre = genres[genre_num - 1]   # number → genre name (list is 0-indexed)
 
     year_from = _prompt_int(
         f"{Colors.BOLD}Год ОТ ({min_year}–{max_year}): {Colors.RESET}",
@@ -206,7 +204,7 @@ def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None
 
 
 def show_popular_searches(stats: SearchStats) -> None:
-    """Displays the top 5 most frequent search queries."""
+    """Отображает ТОП-5 самых частых поисковых запросов."""
     try:
         records = stats.get_popular_searches(limit=5)
         print(SearchHistoryFormatter(records, "ТОП-5 ПОПУЛЯРНЫХ ЗАПРОСОВ"))
@@ -216,7 +214,7 @@ def show_popular_searches(stats: SearchStats) -> None:
 
 
 def show_recent_searches(stats: SearchStats) -> None:
-    """Displays the last 5 unique search queries."""
+    """Отображает 5 последних уникальных поисковых запросов."""
     try:
         records = stats.get_recent_unique_searches(limit=5)
         print(SearchHistoryFormatter(records, "5 ПОСЛЕДНИХ УНИКАЛЬНЫХ ЗАПРОСОВ"))
@@ -226,7 +224,7 @@ def show_recent_searches(stats: SearchStats) -> None:
 
 
 def exit_app(logger: SearchLogger, stats: SearchStats) -> None:
-    """Closes the application correctly."""
+    """Корректно завершает работу приложения."""
     print(InfoMessage("\n  До свидания! 🎬\n", "success"))
     log.info("Приложение завершено пользователем")
     logger.close()
@@ -234,7 +232,7 @@ def exit_app(logger: SearchLogger, stats: SearchStats) -> None:
     sys.exit(0)
 
 
-# ── Menu glossary ──────────────────────────────────────────────────────────────
+# ── Словарь меню ──────────────────────────────────────────────────────────────
 
 def _build_menu_actions(
     searcher: MovieSearcher,
@@ -242,12 +240,12 @@ def _build_menu_actions(
     stats: SearchStats,
 ) -> dict:
     """
-    Creates a dictionary of menu items with associated actions.
+    Строит словарь пунктов меню с привязанными действиями.
 
-    Structure: {"key": ("Item name", callable)}
+    Структура: {"ключ": ("Название пункта", callable)}
 
-    To add a new item, simply add a line here.
-    There is no need to modify either MenuFormatter or run_menu().
+    Чтобы добавить новый пункт — достаточно добавить одну строку сюда.
+    Ни MenuFormatter, ни run_menu() трогать не нужно.
     """
     return {
         "1": ("Поиск по ключевому слову",
@@ -263,7 +261,7 @@ def _build_menu_actions(
     }
 
 
-# ── Public menu entry point ──────────────────────────────────────────────
+# ── Публичная точка входа в меню ──────────────────────────────────────────────
 
 def run_menu(
     searcher: MovieSearcher,
@@ -271,14 +269,14 @@ def run_menu(
     stats: SearchStats,
 ) -> None:
     """
-    Starts an interactive menu loop.
+    Запускает интерактивный цикл меню.
 
-    Called from main.py — the only public function of this module.
+    Вызывается из main.py — единственная публичная функция этого модуля.
 
     Args:
-        searcher: An instance of MovieSearcher for search queries.
-        logger: An instance of SearchLogger for logging history.
-        stats: An instance of SearchStats for reading statistics.
+        searcher: Экземпляр MovieSearcher для поисковых запросов.
+        logger:   Экземпляр SearchLogger для записи истории.
+        stats:    Экземпляр SearchStats для чтения статистики.
     """
     menu_actions   = _build_menu_actions(searcher, logger, stats)
     menu_formatter = MenuFormatter(menu_actions)
