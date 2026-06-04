@@ -1,13 +1,13 @@
 """
-menu.py — взаимодействие с пользователем через консольное меню.
+menu.py — user interaction via a console menu.
 
-Отвечает только за:
-  • Ввод и валидацию данных от пользователя.
-  • Построение словаря меню с привязанными действиями.
-  • Запуск интерактивного цикла меню.
+Responsible only for:
+  • Inputting and validating user data.
+  • Building a menu dictionary with associated actions.
+  • Running the interactive menu loop.
 
-Не содержит SQL, форматирования вывода и логики подключения к БД.
-Вызывается из main.py через run_menu().
+Does not contain SQL, output formatting or database connection logic.
+Called from main.py via run_menu().
 """
 
 import sys
@@ -28,19 +28,19 @@ from logger import get_logger
 log = get_logger(__name__)
 
 
-# ── Вспомогательные функции ввода ─────────────────────────────────────────────
+# ── Input support functions ─────────────────────────────────────────────
 
 def _prompt(message: str) -> str:
-    """Выводит подсказку и возвращает введённую строку (strip)."""
+    """Displays a prompt and returns the entered string (strip)."""
     return input(message).strip()
 
 
 def _prompt_int(message: str, min_val: int, max_val: int) -> int | None:
     """
-    Запрашивает целое число в диапазоне [min_val, max_val].
+    Requests an integer within the range [min_val, max_val].
 
     Returns:
-        Введённое число или None при некорректном вводе.
+        The entered number, or None if the input is invalid.
     """
     raw = _prompt(message)
     try:
@@ -63,14 +63,14 @@ def _prompt_int(message: str, min_val: int, max_val: int) -> int | None:
 
 
 def _ask_next_page() -> bool:
-    """Спрашивает, показывать ли следующую страницу результатов."""
+    """It asks whether to display the next page of results."""
     answer = _prompt(
         f"\n{Colors.BOLD}Показать следующие результаты? [y/n]: {Colors.RESET}"
     ).lower()
     return answer in ("y", "yes", "д", "да")
 
 
-# ── Безопасное логирование в MongoDB ──────────────────────────────────────────
+# ── Secure logging in MongoDB ──────────────────────────────────────────
 
 def _safe_log(
     logger: SearchLogger,
@@ -78,7 +78,7 @@ def _safe_log(
     params: dict,
     results_count: int,
 ) -> None:
-    """Сохраняет запрос в MongoDB, не прерывая работу при сбое."""
+    """Saves the query to MongoDB without interrupting operations in the event of a failure."""
     try:
         logger.log_search(search_type, params, results_count)
     except (ConnectionError, RuntimeError, ValueError) as exc:
@@ -89,7 +89,7 @@ def _safe_log(
 # ── Действия меню ─────────────────────────────────────────────────────────────
 
 def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
-    """Сценарий 1: поиск фильмов по ключевому слову в названии (постранично)."""
+    """Scenario 1: Searching for films by keyword in the title (page by page)."""
     keyword = _prompt(f"{Colors.BOLD}Введите ключевое слово: {Colors.RESET}")
 
     if not keyword:
@@ -124,7 +124,7 @@ def run_keyword_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
 
 
 def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None:
-    """Сценарий 2: поиск по жанру + диапазону годов."""
+    """Scenario 2: Search by genre and year range."""
     try:
         genres = searcher.get_genres()
         min_year, max_year = searcher.get_year_range()
@@ -204,7 +204,7 @@ def run_genre_year_search(searcher: MovieSearcher, logger: SearchLogger) -> None
 
 
 def show_popular_searches(stats: SearchStats) -> None:
-    """Отображает ТОП-5 самых частых поисковых запросов."""
+    """Displays the top 5 most frequent search queries."""
     try:
         records = stats.get_popular_searches(limit=5)
         print(SearchHistoryFormatter(records, "ТОП-5 ПОПУЛЯРНЫХ ЗАПРОСОВ"))
@@ -214,7 +214,7 @@ def show_popular_searches(stats: SearchStats) -> None:
 
 
 def show_recent_searches(stats: SearchStats) -> None:
-    """Отображает 5 последних уникальных поисковых запросов."""
+    """Displays the last 5 unique search queries."""
     try:
         records = stats.get_recent_unique_searches(limit=5)
         print(SearchHistoryFormatter(records, "5 ПОСЛЕДНИХ УНИКАЛЬНЫХ ЗАПРОСОВ"))
@@ -224,7 +224,7 @@ def show_recent_searches(stats: SearchStats) -> None:
 
 
 def exit_app(logger: SearchLogger, stats: SearchStats) -> None:
-    """Корректно завершает работу приложения."""
+    """Correctly closes the application."""
     print(InfoMessage("\n  До свидания! 🎬\n", "success"))
     log.info("Приложение завершено пользователем")
     logger.close()
@@ -232,7 +232,7 @@ def exit_app(logger: SearchLogger, stats: SearchStats) -> None:
     sys.exit(0)
 
 
-# ── Словарь меню ──────────────────────────────────────────────────────────────
+# ── Menu glossary ──────────────────────────────────────────────────────────────
 
 def _build_menu_actions(
     searcher: MovieSearcher,
@@ -240,12 +240,12 @@ def _build_menu_actions(
     stats: SearchStats,
 ) -> dict:
     """
-    Строит словарь пунктов меню с привязанными действиями.
+    Creates a dictionary of menu items with associated actions.
 
-    Структура: {"ключ": ("Название пункта", callable)}
+    Structure: {"key": ("Item name", callable)}
 
-    Чтобы добавить новый пункт — достаточно добавить одну строку сюда.
-    Ни MenuFormatter, ни run_menu() трогать не нужно.
+    To add a new item, simply add a line here.
+    There is no need to modify either MenuFormatter or run_menu().
     """
     return {
         "1": ("Поиск по ключевому слову",
@@ -261,7 +261,7 @@ def _build_menu_actions(
     }
 
 
-# ── Публичная точка входа в меню ──────────────────────────────────────────────
+# ── Public menu entry point ──────────────────────────────────────────────
 
 def run_menu(
     searcher: MovieSearcher,
@@ -269,14 +269,13 @@ def run_menu(
     stats: SearchStats,
 ) -> None:
     """
-    Запускает интерактивный цикл меню.
+    Starts an interactive menu loop.
 
-    Вызывается из main.py — единственная публичная функция этого модуля.
+    Called from main.py — the only public function in this module.
 
     Args:
-        searcher: Экземпляр MovieSearcher для поисковых запросов.
-        logger:   Экземпляр SearchLogger для записи истории.
-        stats:    Экземпляр SearchStats для чтения статистики.
+        searcher: A MovieSearcher instance for search queries.
+        logger: A SearchLogger instance for logging history.
     """
     menu_actions   = _build_menu_actions(searcher, logger, stats)
     menu_formatter = MenuFormatter(menu_actions)
